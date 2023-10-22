@@ -33,9 +33,9 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define TIM_CLK 100000000 // System clock at 100MHz
-#define DESIRED_FREQUENCY 800000 // Desired PWM frequency
+//#define DESIRED_FREQUENCY 625000 // Desired PWM frequency
 
-#define DUTY_TX_ZERO 32
+#define DUTY_TX_ZERO 24
 //#define DUTY_TX_ZERO 24
 #define DUTY_TX_ONE 63
 
@@ -52,6 +52,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 TIM_HandleTypeDef htim9;
+
+UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
@@ -71,6 +73,7 @@ static color matrix_values[MATRIX_X][MATRIX_Y];
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_TIM9_Init(void);
+static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 
@@ -89,7 +92,7 @@ void PWM_Configuration() {
   htim9.Instance = TIM9;
   htim9.Init.Prescaler = 0;
   htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim9.Init.Period = 125-1;
+  htim9.Init.Period = 160-1;
   htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim9) != HAL_OK)
@@ -107,7 +110,7 @@ void PWM_Configuration() {
   }
 
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0; // Initialize pulse to 50% duty cycle
+  sConfigOC.Pulse = 0; // Initialize pulse to 00% duty cycle
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
 
@@ -137,11 +140,11 @@ void init_matrix(){
 	{
 		for(uint32_t y=0; y<MATRIX_Y; y++)
 		{
-			color color = {.r=0xff, .g=0x00, .b=0x00};
-			#ifdef SET_PSRAND_INIT
+			color color = {.r=0b00000000, .g=0b00011000, .b=0x00};
+			/*#ifdef SET_PSRAND_INIT
 				if(x%2){
 					color.r=0xf0;
-					color.g=0b10011100;
+					color.g=0b00011000;
 				}
 
 				if(y%3) {
@@ -155,20 +158,21 @@ void init_matrix(){
 					color.g=0b01010101;
 					color.b=0101010101;
 				}
-			#endif
+			#endif*/
 
 			matrix_values[x][y] = color;
 		}
 	}
 }
 
-void use_matrix(uint8_t duty)
+void use_matrix()
 {
   // rst
   SetDutyCycle(0);
   HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
-  for(volatile uint32_t i=0; i<500*64; i++){};
+  HAL_Delay(200);
   HAL_TIM_PWM_Stop(&htim9, TIM_CHANNEL_1);
+  __HAL_TIM_CLEAR_FLAG(&htim9, TIM_FLAG_UPDATE);
 
   // drive new values: G R B
 
@@ -198,18 +202,20 @@ void use_matrix(uint8_t duty)
 			  // adjust PWM as the bits in matrix dictate
 			  for(uint8_t bit_idx=0; bit_idx<8; bit_idx++)
 			  {
-				  if(r_g_b & (1 << bit_idx)){
+				  if((r_g_b & (1 << bit_idx)) && byte_idx==0){
 					  SetDutyCycle(DUTY_TX_ONE);
 				  } else {
 					  SetDutyCycle(DUTY_TX_ZERO);
 				  }
 
+				  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
+
 				  // poll for done bit.
-				  while(!__HAL_TIM_GET_FLAG(&htim9, TIM_FLAG_UPDATE)){
-					   // Clear the update event flag
-					   __HAL_TIM_CLEAR_FLAG(&htim9, TIM_FLAG_UPDATE);
-					   break;
-				 }
+				  while(!__HAL_TIM_GET_FLAG(&htim9, TIM_FLAG_UPDATE));
+				  HAL_TIM_PWM_Stop(&htim9, TIM_CHANNEL_1);
+				  // Clear the update event flag
+				  __HAL_TIM_CLEAR_FLAG(&htim9, TIM_FLAG_UPDATE);
+
 			  }
 		  }
 	  }
@@ -260,10 +266,11 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
 //  MX_TIM9_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
   PWM_Configuration();
 
-  use_matrix(DUTY_TX_ZERO);
+  use_matrix();
 
   /* USER CODE END 2 */
 
@@ -384,6 +391,39 @@ static void MX_TIM9_Init(void)
 
   /* USER CODE END TIM9_Init 2 */
   HAL_TIM_MspPostInit(&htim9);
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
 
 }
 
