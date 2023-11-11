@@ -35,9 +35,9 @@
 #define TIM_CLK 100000000 // System clock at 100MHz
 //#define DESIRED_FREQUENCY 625000 // Desired PWM frequency
 
-#define DUTY_TX_ZERO 24
+#define DUTY_TX_ZERO 25
 //#define DUTY_TX_ZERO 24
-#define DUTY_TX_ONE 63
+#define DUTY_TX_ONE 50
 
 #define BITS_PER_COLOR_CH 24
 #define MATRIX_X 8
@@ -94,7 +94,7 @@ void PWM_Configuration() {
   htim9.Instance = TIM9;
   htim9.Init.Prescaler = 0;
   htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim9.Init.Period = 160-1;
+  htim9.Init.Period = 180;
   htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim9) != HAL_OK)
@@ -112,7 +112,7 @@ void PWM_Configuration() {
   }
 
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0; // Initialize pulse to 00% duty cycle
+  sConfigOC.Pulse = 0; // Initialize pulse to 0% duty cycle
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
 
@@ -142,12 +142,19 @@ void init_matrix(){
 	{
 		for(uint32_t y=0; y<MATRIX_Y; y++)
 		{
-			color color = {.r=0b00110000, .g=0b00000000, .b=0x00};
+			color color = {.r=0b00000011, .g=0b00000011, .b=0b00000011};
 //			#ifdef SET_PSRAND_INIT
-				if(x == 0){
-					color.r=0xff;
-					color.g=0b00011000;
-				}
+//				if(x == 0){
+//					color.r=0xff;
+//					color.g=0b00000000;
+//				}
+//				if(x==1) {
+//					color.g = 0xff;
+//				}
+//
+//				if(x==1) {
+//					color.g = 0xff;
+//				}
 
 //				if(y%3) {
 //					color.r=0xff;
@@ -155,11 +162,11 @@ void init_matrix(){
 //					color.b=0xff;
 //				}
 
-				if(x==7) {
-					color.r=0xff;
+//				if(x==7) {
+//					color.r=0xff;
 //					color.g=0b01010101;
 //					color.b=0101010101;
-				}
+//				}
 //			#endif
 
 			matrix_values[x][y] = color;
@@ -204,7 +211,7 @@ void use_matrix()
 			  // adjust PWM as the bits in matrix dictate
 			  for(uint8_t bit_idx=0; bit_idx<8; bit_idx++)
 			  {
-				  if((r_g_b & (1 << bit_idx))){
+				  if((r_g_b & (1 << (8-bit_idx) ) )){
 					  SetDutyCycle(DUTY_TX_ONE);
 				  } else {
 					  SetDutyCycle(DUTY_TX_ZERO);
