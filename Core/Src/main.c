@@ -15,12 +15,25 @@
   *
   ******************************************************************************
   */
+
+	////////////////////////7
+
+//	IDEAS
+
+//	uint8_t lines in matrix shape would allow image combo masking using bitmasks (and reduce storage demand)
+//  3-stage pixel output stage with separate masking for R-G-B channels
+//  add a few sweeping animations
+
+	////////////////////////
+
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+
+#include "pixel_shape_masks.h"
 
 /* USER CODE END Includes */
 
@@ -35,13 +48,15 @@
 #define TIM_CLK 100000000 // System clock at 100MHz
 //#define DESIRED_FREQUENCY 625000 // Desired PWM frequency
 
-#define DUTY_TX_ZERO 25
-//#define DUTY_TX_ZERO 24
-#define DUTY_TX_ONE 50
+#define DUTY_TX_ZERO 23
+#define DUTY_TX_ONE 55
 
 #define BITS_PER_COLOR_CH 24
 #define MATRIX_X 8
 #define MATRIX_Y 8
+
+// master brightness control & gate edge bits to 0 to prevent glitches
+#define OUTPUT_BITMASK ((uint8_t) 0b01111110)
 
 //#define SET_PSRAND_INIT 1
 
@@ -66,6 +81,13 @@ typedef struct {
 	uint8_t g;
 	uint8_t b;
 } color ;
+
+const static color no_color = {.r=0x00, .g=0x00, .b=0x00};
+const static color pink     = {.r=0x0f, .g=0x03, .b=0x08};
+const static color red      = {.r=0x0f, .g=0x00, .b=0x00};
+const static color green    = {.r=0x00, .g=0x0f, .b=0x00};
+const static color blue     = {.r=0x00, .g=0x00, .b=0x0f};
+const static color white    = {.r=0x08, .g=0x08, .b=0x08};
 
 static color matrix_values[MATRIX_X][MATRIX_Y];
 
@@ -94,7 +116,7 @@ void PWM_Configuration() {
   htim9.Instance = TIM9;
   htim9.Init.Prescaler = 0;
   htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim9.Init.Period = 180;
+  htim9.Init.Period = 160;
   htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim9) != HAL_OK)
@@ -137,50 +159,41 @@ void SetDutyCycle(uint8_t duty_cycle) {
   htim9.Instance->CCR1 = ((htim9.Init.Period + 1) * duty_cycle) / 100;
 }
 
-void init_matrix(){
-	for(uint32_t x=0; x<MATRIX_X; x++)
-	{
-		for(uint32_t y=0; y<MATRIX_Y; y++)
-		{
-			color color = {.r=0b00000011, .g=0b00000011, .b=0b00000011};
-//			#ifdef SET_PSRAND_INIT
-//				if(x == 0){
-//					color.r=0xff;
-//					color.g=0b00000000;
-//				}
-//				if(x==1) {
-//					color.g = 0xff;
-//				}
-//
-//				if(x==1) {
-//					color.g = 0xff;
-//				}
+// LEDs are connected FIFO style:
+// 1st row: L->R --
+// 	   			  |
+// 2nd row: L<-R --
+// etc.
+// prepare sw buffer
+void write_matrix(matrix_shape mtx, color target_color){
+	for(uint32_t y=0; y<MATRIX_X; y++) {
+		for(uint32_t x=0; x<MATRIX_Y; x++) {
+			color color = {.r=0b00000000, .g=0b00000000, .b=0b00000000};
+			if(mtx[x][y]){
+				color.r = target_color.r;
+				color.b = target_color.g;
+				color.g = target_color.b;
+			}
 
-//				if(y%3) {
-//					color.r=0xff;
-//					color.g=0xf0;
-//					color.b=0xff;
-//				}
-
-//				if(x==7) {
-//					color.r=0xff;
-//					color.g=0b01010101;
-//					color.b=0101010101;
-//				}
-//			#endif
-
-			matrix_values[x][y] = color;
+			if((y % 2)){
+				matrix_values[y][7-x] = color;
+			} else {
+				matrix_values[y][x] = color;
+			}
 		}
 	}
 }
 
-void use_matrix()
-{
+void shield_reset() {
+	SetDutyCycle(00);
+	HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
+	HAL_Delay(11);
+}
+
+void use_matrix() {
   // rst
-  SetDutyCycle(0);
-  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
-  HAL_Delay(200);
-  HAL_TIM_PWM_Stop(&htim9, TIM_CHANNEL_1);
+  shield_reset();
+  //HAL_TIM_PWM_Stop(&htim9, TIM_CHANNEL_1);
   __HAL_TIM_CLEAR_FLAG(&htim9, TIM_FLAG_UPDATE);
 
   // drive new values: G R B
@@ -189,54 +202,40 @@ void use_matrix()
   color color;
   uint8_t r_g_b;
 
-  for(uint8_t pixel_idx_x=0; pixel_idx_x<MATRIX_X; pixel_idx_x++)
-  {
-	  for(uint8_t pixel_idx_y=0; pixel_idx_y<MATRIX_Y; pixel_idx_y++)
-	  {
+  for(uint8_t pixel_idx_x=0; pixel_idx_x<MATRIX_X; pixel_idx_x++) {
+	  for(uint8_t pixel_idx_y=0; pixel_idx_y<MATRIX_Y; pixel_idx_y++) {
+
 		  color = matrix_values[pixel_idx_x][pixel_idx_y];
-		  for(uint8_t byte_idx=0; byte_idx<3; byte_idx++)
-		  {
-			  switch(byte_idx)
-			  {
-			  case 0:
-				  r_g_b = color.g;
-				  break;
-			  case 1:
-				  r_g_b = color.r;
-				  break;
-			  case 2:
-				  r_g_b = color.b;
-				  break;
+		  for(uint8_t byte_idx=0; byte_idx<3; byte_idx++) {
+			  switch(byte_idx){
+				  case 0:
+					  r_g_b = color.g  & OUTPUT_BITMASK;
+					  break;
+				  case 1:
+					  r_g_b = color.r  & OUTPUT_BITMASK;
+					  break;
+				  case 2:
+					  r_g_b = color.b  & OUTPUT_BITMASK;
+					  break;
 			  }
 			  // adjust PWM as the bits in matrix dictate
-			  for(uint8_t bit_idx=0; bit_idx<8; bit_idx++)
-			  {
-				  if((r_g_b & (1 << (8-bit_idx) ) )){
+			  for(uint8_t bit_idx=0; bit_idx<8; bit_idx++) {
+
+				  if((r_g_b & (1 << (7-bit_idx) ) )){
 					  SetDutyCycle(DUTY_TX_ONE);
 				  } else {
 					  SetDutyCycle(DUTY_TX_ZERO);
 				  }
-
 				  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
-
 				  // poll for done bit.
 				  while(!__HAL_TIM_GET_FLAG(&htim9, TIM_FLAG_UPDATE));
-				  HAL_TIM_PWM_Stop(&htim9, TIM_CHANNEL_1);
 				  // Clear the update event flag
 				  __HAL_TIM_CLEAR_FLAG(&htim9, TIM_FLAG_UPDATE);
-
 			  }
 		  }
 	  }
   }
 
-
-
-//  SetDutyCycle(duty);
-//  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
-//  for(volatile uint32_t i=0; i<500*64; i++){};
-//  HAL_Delay(1000);
-//  HAL_TIM_PWM_Stop(&htim9, TIM_CHANNEL_1);
 
 }
 
@@ -250,13 +249,13 @@ int main(void)
 {
   /* USER CODE BEGIN 1 */
 
-	init_matrix();
+	write_matrix(matrix_clear, no_color);
 
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  /* Reset of all peripherals, Initializes the Flash interfaceåp and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -279,7 +278,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
   PWM_Configuration();
 
-  use_matrix();
+  shield_reset();
+  shield_reset();
 
   /* USER CODE END 2 */
 
@@ -291,9 +291,49 @@ int main(void)
 
 		HAL_Delay(500);
 
-//		use_matrix(50);
+		write_matrix(matrix_square, green);
+		use_matrix();
+		HAL_Delay(2000);
 
+		write_matrix(matrix_checkers, pink);
+		use_matrix();
+		HAL_Delay(2000);
 
+		write_matrix(matrix_square, blue);
+		use_matrix();
+		HAL_Delay(2000);
+
+		write_matrix(matrix_left_side, pink);
+		use_matrix();
+		HAL_Delay(2000);
+
+		write_matrix(matrix_right_side, red);
+		use_matrix();
+		HAL_Delay(2000);
+
+		write_matrix(matrix_alt, blue);
+		use_matrix();
+		HAL_Delay(250);
+
+		write_matrix(matrix_alt_2, green);
+		use_matrix();
+		HAL_Delay(250);
+
+		write_matrix(matrix_alt, red);
+		use_matrix();
+		HAL_Delay(250);
+
+		write_matrix(matrix_alt_2, pink);
+		use_matrix();
+		HAL_Delay(250);
+
+		write_matrix(matrix_alt, white);
+		use_matrix();
+		HAL_Delay(250);
+
+		write_matrix(matrix_one, white);
+		use_matrix();
+		HAL_Delay(1500);
 
     /* USER CODE END WHILE */
 
@@ -387,7 +427,7 @@ static void MX_TIM9_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 43;
+  sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   if (HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
