@@ -16,7 +16,7 @@
   ******************************************************************************
   */
 
-	////////////////////////7
+	/////////////////////////
 
 //	IDEAS
 
@@ -48,15 +48,22 @@
 #define TIM_CLK 100000000 // System clock at 100MHz
 //#define DESIRED_FREQUENCY 625000 // Desired PWM frequency
 
-#define DUTY_TX_ZERO 23
-#define DUTY_TX_ONE 55
+//#define DUTY_TX_ZERO 23
+//#define DUTY_TX_ONE  55
+
+#define DUTY_TX_ZERO 25
+#define DUTY_TX_ONE  50
+
+//#define DUTY_TX_ZERO 40
+//#define DUTY_TX_ONE 80
 
 #define BITS_PER_COLOR_CH 24
-#define MATRIX_X 8
-#define MATRIX_Y 8
+#define MATRIX_X  8
+#define MATRIX_Y  8
+#define MTX_CHARS 4
 
-// master brightness control & gate edge bits to 0 to prevent glitches
-#define OUTPUT_BITMASK ((uint8_t) 0b01111110)
+// master brightness control / gate edge bits to 0 to prevent glitches
+#define OUTPUT_BITMASK ((uint8_t) 0b1111111)
 
 //#define SET_PSRAND_INIT 1
 
@@ -89,7 +96,7 @@ const static color green    = {.r=0x00, .g=0x0f, .b=0x00};
 const static color blue     = {.r=0x00, .g=0x00, .b=0x0f};
 const static color white    = {.r=0x08, .g=0x08, .b=0x08};
 
-static color matrix_values[MATRIX_X][MATRIX_Y];
+static color matrix_values[MATRIX_Y][MATRIX_Y*MTX_CHARS];
 
 /* USER CODE END PV */
 
@@ -116,7 +123,7 @@ void PWM_Configuration() {
   htim9.Instance = TIM9;
   htim9.Init.Prescaler = 0;
   htim9.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim9.Init.Period = 160;
+  htim9.Init.Period = 165;
   htim9.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim9.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim9) != HAL_OK)
@@ -136,7 +143,7 @@ void PWM_Configuration() {
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
   sConfigOC.Pulse = 0; // Initialize pulse to 0% duty cycle
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCFastMode = TIM_OCFAST_ENABLE;
 
 
   if (HAL_TIM_PWM_ConfigChannel(&htim9, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
@@ -146,16 +153,17 @@ void PWM_Configuration() {
 
   HAL_TIM_MspPostInit(&htim9);
 
-  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
+//  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
 }
 
 void SetDutyCycle(uint8_t duty_cycle) {
-  // Ensure the duty cycle is within bounds (0-100%)
+  // ensure the duty cycle is within bounds (0-100%)
   if (duty_cycle > 100) {
     duty_cycle = 100;
   }
 
   // Calculate and set the new pulse value based on the duty cycle
+//  printf("%d\r\n", hstim9.Init.Period);
   htim9.Instance->CCR1 = ((htim9.Init.Period + 1) * duty_cycle) / 100;
 }
 
@@ -165,57 +173,84 @@ void SetDutyCycle(uint8_t duty_cycle) {
 // 2nd row: L<-R --
 // etc.
 // prepare sw buffer
-void write_matrix(matrix_shape mtx, color target_color){
-	for(uint32_t y=0; y<MATRIX_X; y++) {
-		for(uint32_t x=0; x<MATRIX_Y; x++) {
-			color color = {.r=0b00000000, .g=0b00000000, .b=0b00000000};
-			if(mtx[x][y]){
-				color.r = target_color.r;
-				color.b = target_color.g;
-				color.g = target_color.b;
+void write_matrix(matrix_shape mtx, color target_color, uint8_t ch_idx)
+{
+	for(uint16_t x=0; x<MATRIX_Y; x++) {
+		for(uint16_t y=0; y<MATRIX_X; y++) {
+			color color = {.r=0b00000000, .g=0b00000000, .b=0b11111111};
+			if(ch_idx == 0) {
+				color.r = 0b00001111;
+				color.b = 0b00001100;
+				color.g = 0b00000000;
 			}
 
+			if(ch_idx == 1) {
+				color.g = 0b00001111;
+				color.r = 0b00000000;
+				color.b = 0b00000000;
+			}
+
+			if(ch_idx == 2) {
+				color.r = 0b00001111;
+				color.b = 0b00000000;
+				color.g = 0b00001111;
+			}
+
+			if(ch_idx == 3) {
+				color.b = 0b00001111;
+				color.r = 0b00001111;
+				color.g = 0b00001111;
+			}
+
+//			if(mtx.line[y] & (1 << x))
+//			{
+//				color.r = target_color.r;
+//				color.b = target_color.g;
+//				color.g = target_color.b;
+//			}
+
 			if((y % 2)){
-				matrix_values[y][7-x] = color;
+//				matrix_values[y][31-(MATRIX_X*ch_idx)-x] = color;
+				matrix_values[y][(x+(MATRIX_X*ch_idx))] = color;
 			} else {
-				matrix_values[y][x] = color;
+				matrix_values[y][(x+(MATRIX_X*ch_idx))] = color;
 			}
 		}
 	}
 }
 
-void shield_reset() {
-	SetDutyCycle(00);
+void shield_reset()
+{
+	SetDutyCycle(0);
 	HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
 	HAL_Delay(11);
 }
 
-void use_matrix() {
-  // rst
+void use_matrix()
+{
   shield_reset();
-  //HAL_TIM_PWM_Stop(&htim9, TIM_CHANNEL_1);
+
+  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
+
   __HAL_TIM_CLEAR_FLAG(&htim9, TIM_FLAG_UPDATE);
 
-  // drive new values: G R B
-
-  // variables to store stuff according to state in upcoming for-loops
   color color;
   uint8_t r_g_b;
+  // drive new values: G R B 8b*3
+  for(uint8_t pixel_idx_y=0; pixel_idx_y<(MATRIX_X); pixel_idx_y++) {
+	  for(uint8_t pixel_idx_x=0; pixel_idx_x<(MATRIX_Y*MTX_CHARS); pixel_idx_x++) {
 
-  for(uint8_t pixel_idx_x=0; pixel_idx_x<MATRIX_X; pixel_idx_x++) {
-	  for(uint8_t pixel_idx_y=0; pixel_idx_y<MATRIX_Y; pixel_idx_y++) {
-
-		  color = matrix_values[pixel_idx_x][pixel_idx_y];
+		  color = matrix_values[pixel_idx_y][pixel_idx_x];
 		  for(uint8_t byte_idx=0; byte_idx<3; byte_idx++) {
 			  switch(byte_idx){
 				  case 0:
-					  r_g_b = color.g  & OUTPUT_BITMASK;
+					  r_g_b = color.g & OUTPUT_BITMASK;
 					  break;
 				  case 1:
-					  r_g_b = color.r  & OUTPUT_BITMASK;
+					  r_g_b = color.r & OUTPUT_BITMASK;
 					  break;
 				  case 2:
-					  r_g_b = color.b  & OUTPUT_BITMASK;
+					  r_g_b = color.b & OUTPUT_BITMASK;
 					  break;
 			  }
 			  // adjust PWM as the bits in matrix dictate
@@ -226,7 +261,7 @@ void use_matrix() {
 				  } else {
 					  SetDutyCycle(DUTY_TX_ZERO);
 				  }
-				  HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_1);
+
 				  // poll for done bit.
 				  while(!__HAL_TIM_GET_FLAG(&htim9, TIM_FLAG_UPDATE));
 				  // Clear the update event flag
@@ -235,8 +270,7 @@ void use_matrix() {
 		  }
 	  }
   }
-
-
+  HAL_TIM_PWM_Stop(&htim9, TIM_CHANNEL_1);
 }
 
 /* USER CODE END 0 */
@@ -249,13 +283,11 @@ int main(void)
 {
   /* USER CODE BEGIN 1 */
 
-	write_matrix(matrix_clear, no_color);
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
 
-  /* Reset of all peripherals, Initializes the Flash interfaceåp and the Systick. */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
@@ -279,7 +311,6 @@ int main(void)
   PWM_Configuration();
 
   shield_reset();
-  shield_reset();
 
   /* USER CODE END 2 */
 
@@ -291,49 +322,25 @@ int main(void)
 
 		HAL_Delay(500);
 
-		write_matrix(matrix_square, green);
+		write_matrix(matrix_square, green, 0);
+		write_matrix(matrix_square, blue, 1);
+		write_matrix(matrix_checkers, pink, 2);
+		write_matrix(matrix_square, white, 3);
 		use_matrix();
 		HAL_Delay(2000);
 
-		write_matrix(matrix_checkers, pink);
-		use_matrix();
-		HAL_Delay(2000);
+		//write_matrix(matrix_pillars, green);
+//		use_matrix();
 
-		write_matrix(matrix_square, blue);
-		use_matrix();
-		HAL_Delay(2000);
+		//write_matrix(matrix_pillars, red);
+//		use_matrix();
 
-		write_matrix(matrix_left_side, pink);
-		use_matrix();
-		HAL_Delay(2000);
+		//write_matrix(matrix_pillars, blue);
+//		use_matrix();
 
-		write_matrix(matrix_right_side, red);
-		use_matrix();
-		HAL_Delay(2000);
-
-		write_matrix(matrix_alt, blue);
-		use_matrix();
-		HAL_Delay(250);
-
-		write_matrix(matrix_alt_2, green);
-		use_matrix();
-		HAL_Delay(250);
-
-		write_matrix(matrix_alt, red);
-		use_matrix();
-		HAL_Delay(250);
-
-		write_matrix(matrix_alt_2, pink);
-		use_matrix();
-		HAL_Delay(250);
-
-		write_matrix(matrix_alt, white);
-		use_matrix();
-		HAL_Delay(250);
-
-		write_matrix(matrix_one, white);
-		use_matrix();
-		HAL_Delay(1500);
+		//write_matrix(matrix_pillars, white);
+		//use_matrix();
+		//HAL_Delay(2000);
 
     /* USER CODE END WHILE */
 
@@ -342,7 +349,7 @@ int main(void)
   /* USER CODE END 3 */
 }
 
-/**
+/**x
   * @brief System Clock Configuration
   * @retval None
   */
